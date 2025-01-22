@@ -115,13 +115,13 @@ variable "private_subnet_block_start" {
 variable "ecs_main_task_cpu" {
   description = "CPU for ECS cluster main task"
   type        = number
-  default     = 512
+  default     = 1024
 }
 
 variable "ecs_main_task_memory" {
   description = "Memory for ECS cluster main task"
   type        = number
-  default     = 1024
+  default     = 2048
 }
 
 #

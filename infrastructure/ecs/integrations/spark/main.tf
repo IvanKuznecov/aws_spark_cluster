@@ -1,10 +1,10 @@
-resource "aws_service_discovery_private_dns_namespace" "spark_ns" {
+resource aws_service_discovery_private_dns_namespace spark_ns {
   name        = "spark.local"
   vpc         = var.vpc_id
   description = "Namespace for Spark Cluster"
 }
 
-resource "aws_service_discovery_service" "spark_master_sd" {
+resource aws_service_discovery_service spark_master_sd {
   name = "spark-master"
   namespace_id = aws_service_discovery_private_dns_namespace.spark_ns.id
 
@@ -34,21 +34,21 @@ resource aws_ecs_task_definition spark_master_task  {
   container_definitions = jsonencode([
     {
       name      = "spark_master"
-      image     = "bitnami/spark:latest"
+      image     = "bitnami/spark:latest" # "516371590104.dkr.ecr.eu-west-1.amazonaws.com/custom-spark:1.0"
       essential = true
 
       environment = [
         {
-          "name": "SPARK_MASTER_PORT",
-          "value": tostring(var.spark_master_port)
+          "name": "spark_cluster_port",
+          "value": tostring(var.spark_cluster_port)
         },
         {
-          "name": "SPARK_MASTER_WEBUI_PORT",
-          "value": tostring(var.spark_webui_port)
+          "name": "spark_master_ui_port",
+          "value": tostring(var.spark_master_ui_port)
         },
         {
           name  = "SPARK_MASTER_OPTS"
-          value = "-Dspark.master.rest.enabled=true -Dspark.master.rest.port=${tostring(var.spark_api_port)}"
+          value = "-Dspark.master.rest.enabled=true -Dspark.master.rest.port=${tostring(var.spark_api_port)} -Dspark.ui.reverseProxy=true"
         },
 
         {
@@ -61,15 +61,19 @@ resource aws_ecs_task_definition spark_master_task  {
 
       portMappings = [
         {
-          containerPort = var.spark_master_port
+          containerPort = var.spark_cluster_port
           protocol      = "tcp"
         },
         {
-          containerPort = var.spark_webui_port
+          containerPort = var.spark_master_ui_port
           protocol      = "tcp"
         },
         {
           containerPort = var.spark_api_port
+          protocol      = "tcp"
+        },
+        {
+          containerPort = var.spark_history_port
           protocol      = "tcp"
         }
       ]
@@ -120,7 +124,7 @@ resource aws_ecs_task_definition spark_worker_task  {
   container_definitions = jsonencode([
     {
       name      = "spark_worker"
-      image     = "bitnami/spark:latest"
+      image     = "bitnami/spark:latest" # "516371590104.dkr.ecr.eu-west-1.amazonaws.com/custom-spark:1.0"
       essential = true
 
       environment: [
@@ -130,19 +134,23 @@ resource aws_ecs_task_definition spark_worker_task  {
         },
         {
           "name": "SPARK_MASTER_URL",
-          "value": "spark://spark-master.spark.local:${var.spark_master_port}"
+          "value": "spark://spark-master.spark.local:${var.spark_cluster_port}"
         }
+        # {
+        #   "name": "SPARK_MASTER_URL",
+        #   "value": "spark://${var.load_balancer_dns_name}:${var.spark_cluster_port}"
+        # }
       ]
 
       # command = ["/opt/spark/bin/pyspark"] # "spark-submit /path/to/script.py" for job execution
 
       portMappings = [
         {
-          containerPort = var.spark_master_port
+          containerPort = var.spark_cluster_port
           protocol      = "tcp"
         },
         {
-          containerPort = var.spark_webui_port
+          containerPort = var.spark_master_ui_port
           protocol      = "tcp"
         }
       ]
@@ -191,26 +199,32 @@ resource aws_ecs_service spark_master_service  {
 
   network_configuration {
     subnets          = var.private_subnet_ids
-    security_groups = [aws_security_group.spark_security_group.id]    
+    security_groups = [aws_security_group.spark_master_security_group.id]    
     assign_public_ip = false
   }
 
   load_balancer {
-    target_group_arn = aws_lb_target_group.ecs_spark_target_group_ui.arn
+    target_group_arn = aws_lb_target_group.ecs_spark_master_ui_target_group.arn
     container_name   = "spark_master"
-    container_port   = var.spark_webui_port
+    container_port   = var.spark_master_ui_port
   }
 
+  # load_balancer {
+  #   target_group_arn = aws_lb_target_group.ecs_spark_task_target_group.arn
+  #   container_name   = "spark_master"
+  #   container_port   = var.spark_cluster_port
+  # }
+
   load_balancer {
-    target_group_arn = aws_lb_target_group.ecs_spark_target_group_task.arn
+    target_group_arn = aws_lb_target_group.ecs_spark_master_api_target_group.arn
     container_name   = "spark_master"
-    container_port   = var.spark_master_port
+    container_port   = var.spark_api_port
   }
 
     load_balancer {
-    target_group_arn = aws_lb_target_group.ecs_spark_target_group_api.arn
+    target_group_arn = aws_lb_target_group.ecs_spark_history_target_group.arn
     container_name   = "spark_master"
-    container_port   = var.spark_api_port
+    container_port   = var.spark_history_port
   }
 
   service_registries {
@@ -227,25 +241,25 @@ resource aws_ecs_service spark_worker_service  {
 
   network_configuration {
     subnets          = var.private_subnet_ids
-    security_groups = [aws_security_group.spark_security_group.id]    
+    security_groups = [aws_security_group.spark_worker_security_group.id]    
     assign_public_ip = false
   }
 
 }
 
-resource aws_security_group spark_security_group  {
+resource aws_security_group spark_master_security_group  {
   vpc_id = var.vpc_id
 
   ingress {
-    from_port   = var.spark_webui_port # Spark UI port
-    to_port     = var.spark_webui_port
+    from_port   = var.spark_master_ui_port # Spark UI port
+    to_port     = var.spark_master_ui_port
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"] # Restrict as needed for production [Replace with your IP range]
   }
 
   ingress {
-    from_port   = var.spark_master_port # Spark cluster port
-    to_port     = var.spark_master_port
+    from_port   = var.spark_cluster_port # Spark cluster port
+    to_port     = var.spark_cluster_port
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"] # Restrict as needed for production [aws_security_group.spark_security_group.id]
   }
@@ -256,7 +270,58 @@ resource aws_security_group spark_security_group  {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"] # Restrict to specific IPs in production
   }
+  
+  # egress {
+  #   from_port   = var.spark_worker_ui_port
+  #   to_port     = var.spark_worker_ui_port
+  #   protocol    = "tcp"
+  #   cidr_blocks = ["0.0.0.0/0"]
+  # }
 
+  ingress {
+    from_port   = var.spark_history_port # Spark History endpoint
+    to_port     = var.spark_history_port
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # Restrict to specific IPs in production
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.name_prefix}-spark-master-sg"
+  }
+}
+
+resource aws_security_group spark_worker_security_group  {
+  vpc_id = var.vpc_id
+
+  ingress {
+    from_port   = var.spark_worker_ui_port # Spark UI port
+    to_port     = var.spark_worker_ui_port
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # Restrict as needed for production [Replace with your IP range]
+  }
+
+  # TODO: check if neede if above is already there
+  ingress {
+    from_port   = var.spark_worker_ui_port # Spark Worker UI port
+    to_port     = var.spark_worker_ui_port
+    protocol    = "tcp"
+    security_groups = [aws_security_group.spark_master_security_group.id]
+  }
+
+  ingress {
+    from_port   = var.spark_cluster_port # Spark cluster port
+    to_port     = var.spark_cluster_port
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # Restrict as needed for production [aws_security_group.spark_security_group.id]
+  }
+  
   egress {
     from_port   = 0
     to_port     = 0
@@ -307,23 +372,31 @@ resource aws_cloudwatch_log_group spark_worker_log_group  {
   }
 }
 
-resource "aws_lb_target_group" "ecs_spark_target_group_ui" {
-  name        = "${var.name_prefix}-spark-ui-tg"
-  port        = var.spark_webui_port
+resource aws_lb_target_group ecs_spark_master_ui_target_group {
+  name        = "${var.name_prefix}-spark-master-ui-tg"
+  port        = var.spark_master_ui_port
   protocol    = "TCP"
   target_type = "ip"
   vpc_id      = var.vpc_id
 }
 
-resource "aws_lb_target_group" "ecs_spark_target_group_task" {
-  name        = "${var.name_prefix}-spark-task-tg"
-  port        = var.spark_master_port
+resource aws_lb_target_group ecs_spark_worker_ui_target_group {
+  name        = "${var.name_prefix}-spark-worker-ui-tg"
+  port        = var.spark_worker_ui_port
   protocol    = "TCP"
   target_type = "ip"
   vpc_id      = var.vpc_id
 }
 
-resource "aws_lb_target_group" "ecs_spark_target_group_api" {
+# resource aws_lb_target_group ecs_spark_master_target_group {
+#   name        = "${var.name_prefix}-spark-task-tg"
+#   port        = var.spark_cluster_port
+#   protocol    = "TCP"
+#   target_type = "ip"
+#   vpc_id      = var.vpc_id
+# }
+
+resource aws_lb_target_group ecs_spark_master_api_target_group {
   name        = "${var.name_prefix}-spark-api-tg"
   port        = var.spark_api_port
   protocol    = "TCP"
@@ -331,35 +404,54 @@ resource "aws_lb_target_group" "ecs_spark_target_group_api" {
   vpc_id      = var.vpc_id
 }
 
-resource "aws_lb_listener" "spark_listener_ui" {
+resource aws_lb_target_group ecs_spark_history_target_group {
+  name        = "${var.name_prefix}-spark-history-tg"
+  port        = var.spark_history_port
+  protocol    = "TCP"
+  target_type = "ip"
+  vpc_id      = var.vpc_id
+}
+
+resource aws_lb_listener spark_master_ui_listener {
   load_balancer_arn = var.load_balancer_arn
-  port              = var.spark_webui_port
+  port              = var.spark_master_ui_port
   protocol          = "TCP"
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.ecs_spark_target_group_ui.arn
+    target_group_arn = aws_lb_target_group.ecs_spark_master_ui_target_group.arn
   }
 }
 
-resource "aws_lb_listener" "spark_listener_task" {
+resource aws_lb_listener spark_worker_ui_listener {
   load_balancer_arn = var.load_balancer_arn
-  port              = var.spark_master_port
+  port              = var.spark_worker_ui_port
   protocol          = "TCP"
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.ecs_spark_target_group_task.arn
+    target_group_arn = aws_lb_target_group.ecs_spark_worker_ui_target_group.arn
   }
 }
 
-resource "aws_lb_listener" "spark_listener_api" {
+resource aws_lb_listener spark_api_listener {
   load_balancer_arn = var.load_balancer_arn
   port              = var.spark_api_port
   protocol          = "TCP"
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.ecs_spark_target_group_api.arn
+    target_group_arn = aws_lb_target_group.ecs_spark_master_api_target_group.arn
+  }
+}
+
+resource aws_lb_listener spark_history_listener {
+  load_balancer_arn = var.load_balancer_arn
+  port              = var.spark_history_port
+  protocol          = "TCP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.ecs_spark_history_target_group.arn
   }
 }

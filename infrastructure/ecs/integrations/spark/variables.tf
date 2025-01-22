@@ -58,16 +58,22 @@ variable ecs_task_role_arn  {
   type = string
 }
 
-variable "spark_master_port" {
+variable "spark_cluster_port" {
   description = "Port for Spark master"
   type        = number
   default     = 7077
 }
 
-variable "spark_webui_port" {
+variable "spark_master_ui_port" {
   description = "Port for Spark master WebUI"
   type        = number
   default     = 8080
+}
+
+variable "spark_worker_ui_port" {
+  description = "Port for Spark worker WebUI"
+  type        = number
+  default     = 8081
 }
 
 variable "spark_api_port" {
