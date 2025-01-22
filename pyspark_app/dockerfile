@@ -1,0 +1,17 @@
+# Use the official Apache Spark Python image as the base
+FROM apache/spark-py:v3.4.0
+
+# Set the working directory inside the container
+WORKDIR /app
+
+# Add Spark binaries to PATH
+ENV PATH="/opt/spark/bin:${PATH}"
+
+# Copy the PySpark application to the container
+COPY main.py /app/
+
+COPY requirements.txt /app/
+RUN pip install -r requirements.txt
+
+# Set the command to run the application
+CMD ["pyspark", "/app/main.py"]
