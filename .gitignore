@@ -3,3 +3,5 @@ infrastructure/.*
 pyspark_app/.*/
 data/lambda_spark_submit_api/.*/
 data/app/.*/
+data/app/.* 
+!.gitignore 
